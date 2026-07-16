@@ -1,3 +1,4 @@
+
 from collections import defaultdict, deque
 import keyword
 import re
@@ -57,16 +58,11 @@ class PyTorchCodeGenerator:
 
         self._analyze_forward_variables()
 
-    # =========================================================
-    # Public API
-    # =========================================================
+
 
     def generate(self, include_main=None):
         self._validate()
 
-        # اگر include_main صراحتاً مشخص نشده باشد،
-        # بر اساس وجود config تصمیم می‌گیریم.
-        # مثال MLP config دارد، پس main باید تولید شود.
         if include_main is None:
             include_main = self._should_emit_main()
 
@@ -92,11 +88,11 @@ class PyTorchCodeGenerator:
         return path
 
     def _should_emit_main(self):
-        return "batch_size" in self.config or "device" in self.config
 
-    # =========================================================
-    # Validation
-    # =========================================================
+        return True
+
+
+
 
     def _validate(self):
         if not self.model_name:
@@ -112,6 +108,31 @@ class PyTorchCodeGenerator:
             raise ValueError(
                 f"Code generation failed: output node '{self.output_name}' is not declared."
             )
+        required_after_inference = {
+            "Linear": ("in_features",),
+            "Conv2d": ("in_ch",),
+            "Conv1d": ("in_ch",),
+            "BatchNorm2d": ("num_features",),
+            "LayerNorm": ("normalized_shape",),
+            "MultiHeadAttn": ("embed_dim",),
+            "LSTM": ("input_size",),
+            "GRU": ("input_size",),
+        }
+
+        for node_id, node in self.nodes.items():
+            required_params = required_after_inference.get(
+                node["type"],
+                ()
+            )
+
+            for param_name in required_params:
+                if param_name not in node["params"]:
+                    raise ValueError(
+                        f"Internal compiler error: parameter "
+                        f"'{param_name}' of node '{node_id}' "
+                        "was not resolved before code generation."
+                    )
+
 
     def _linear_should_be_positional(self, node_id):
         """
@@ -131,9 +152,7 @@ class PyTorchCodeGenerator:
                 or node_name.startswith("ff")
         )
 
-    # =========================================================
-    # Safe names
-    # =========================================================
+
 
     def _safe_class_name(self, name):
         name = re.sub(r"\W", "_", str(name))
@@ -196,9 +215,7 @@ class PyTorchCodeGenerator:
         self.temp_used.add(name)
         return name
 
-    # =========================================================
-    # Class / init / forward
-    # =========================================================
+
 
     def _emit_class(self):
         lines = []
@@ -239,12 +256,7 @@ class PyTorchCodeGenerator:
         return lines
 
     def _init_comment_before_node(self, node_id):
-        """
-        کامنت‌های init برای مثال Inception:
-            # Branch A
-            # Branch B
-            # Merge
-        """
+
 
         node_type = self.nodes[node_id]["type"]
 
@@ -307,21 +319,11 @@ class PyTorchCodeGenerator:
         return lines
 
     def _forward_comment_before_node(self, node_id):
-        """
-        کامنت‌های forward برای مثال‌های پروژه:
-            Transformer:
-                # Self-attention sub-layer
-                # Feed-forward sub-layer
 
-            Inception:
-                # Branch A
-                # Branch B
-                # Concat and finalize
-        """
 
         node_type = self.nodes[node_id]["type"]
 
-        # Transformer attention block
+
         if node_type == "MultiHeadAttn":
             key = "Self-attention sub-layer"
 
@@ -329,7 +331,7 @@ class PyTorchCodeGenerator:
                 self._emitted_forward_comments.add(key)
                 return key
 
-        # Transformer feed-forward block
+
         if node_id.lower().startswith("ff1"):
             key = "Feed-forward sub-layer"
 
@@ -337,7 +339,7 @@ class PyTorchCodeGenerator:
                 self._emitted_forward_comments.add(key)
                 return key
 
-        # Inception branch comments
+
         for edge in self.in_edges.get(node_id, []):
             edge_id = edge["_id"]
 
@@ -358,7 +360,7 @@ class PyTorchCodeGenerator:
                         self._emitted_forward_comments.add(key)
                         return key
 
-        # Inception concat comment
+
         if node_type == "Concat":
             key = "Concat and finalize"
 
@@ -368,9 +370,7 @@ class PyTorchCodeGenerator:
 
         return None
 
-    # =========================================================
-    # Layer mapping
-    # =========================================================
+
 
     def _layer_code(self, node_id):
         node = self.nodes[node_id]
@@ -619,9 +619,7 @@ class PyTorchCodeGenerator:
 
         return f"{name}({', '.join(parts)})"
 
-    # =========================================================
-    # Forward node emitters
-    # =========================================================
+
 
     def _emit_node_forward(self, node_id):
         node_type = self.nodes[node_id]["type"]
@@ -774,7 +772,6 @@ class PyTorchCodeGenerator:
         params = self.nodes[node_id].get("params", {}) or {}
         dim = params.get("dim", 1)
 
-        # برای Conv2d معمولاً ورودی مدل شکل C,H,W دارد و batch جداگانه اضافه می‌شود.
         if dim != 1:
             return ""
 
@@ -895,10 +892,7 @@ class PyTorchCodeGenerator:
 
         return lines
 
-    # =========================================================
-    # Forward helpers
-    # =========================================================
-
+    # helpers
     def _input_pairs(self, node_id):
         pairs = []
 
@@ -992,9 +986,7 @@ class PyTorchCodeGenerator:
 
         raise ValueError(f"Output expression for '{self.output_name}' was not generated.")
 
-    # =========================================================
-    # Residual / branch analysis
-    # =========================================================
+
 
     def _analyze_forward_variables(self):
         branch_names = [
@@ -1081,9 +1073,7 @@ class PyTorchCodeGenerator:
             or "skip" in label
         )
 
-    # =========================================================
-    # Graph algorithms
-    # =========================================================
+
 
     def _find_active_nodes(self):
         reachable_from_input = set()
@@ -1161,10 +1151,7 @@ class PyTorchCodeGenerator:
                 if indegree[dst] == 0:
                     ready_nodes.append(dst)
 
-            # نکته مهم:
-            # nodeهای تازه آماده‌شده را به ابتدای صف می‌بریم
-            # تا مسیر فعلی کامل شود و بعد برویم سراغ branch بعدی.
-            # reversed باعث می‌شود ترتیب edgeها حفظ شود.
+
             for dst in reversed(ready_nodes):
                 queue.appendleft(dst)
 
@@ -1174,9 +1161,7 @@ class PyTorchCodeGenerator:
 
         return order
 
-    # =========================================================
-    # Optional __main__
-    # =========================================================
+
 
     def _emit_main_block(self):
         batch_size = self._config_value("batch_size", 1)
@@ -1201,10 +1186,7 @@ class PyTorchCodeGenerator:
         return lines
 
     def _demo_output_shape_comment(self, batch_size):
-        """
-        فقط برای کامنت نمایشی خروجی در main.
-        برای MLP مثال اول خروجی را torch.Size([64, 10]) درمی‌آورد.
-        """
+
 
         out_features = self._infer_final_out_features()
 
@@ -1214,17 +1196,14 @@ class PyTorchCodeGenerator:
         return ""
 
     def _infer_final_out_features(self):
-        """
-        اگر خروجی نهایی Softmax باشد و ورودی آن Linear باشد،
-        out_features را از Linear قبلی می‌گیرد.
-        """
+
 
         if self.output_name not in self.nodes:
             return None
 
         output_type = self.nodes[self.output_name]["type"]
 
-        # مثال MLP: output node = out : Softmax(dim=1)
+
         if output_type == "Softmax":
             incoming = self.in_edges.get(self.output_name, [])
 
@@ -1237,7 +1216,7 @@ class PyTorchCodeGenerator:
                     if prev_info["type"] == "Linear":
                         return prev_info["params"].get("out_features")
 
-        # اگر خود output node از نوع Linear باشد
+
         if output_type == "Linear":
             return self.nodes[self.output_name]["params"].get("out_features")
 

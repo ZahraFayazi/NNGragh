@@ -1,0 +1,34 @@
+digraph "InceptionBlock" {
+    graph [
+        rankdir=LR,
+        labelloc=t,
+        label="NNGraph model: InceptionBlock",
+        fontname="Helvetica",
+        fontsize=18,
+        nodesep=0.55,
+        ranksep=0.80,
+        splines=polyline
+    ];
+    node [shape=box, style="rounded,filled", fontname="Helvetica", fillcolor="#F7F7F7"];
+    edge [fontname="Helvetica", fontsize=10, color="#555555"];
+
+    "x" [label="x\nInput tensor(32, 56, 56)", shape="oval", fillcolor="#D9EAF7", color="#2878B5", penwidth=1.6];
+    "convA1" [label="convA1\nConv2d(in_ch=32, out_ch=16, kernel=1, stride=1, padding=0)", shape="box", fillcolor="#F7F7F7", color="#666666"];
+    "reluA" [label="reluA\nReLU()", shape="ellipse", fillcolor="#E8F5E9", color="#2E7D32"];
+    "convB1" [label="convB1\nConv2d(in_ch=32, out_ch=16, kernel=1, stride=1, padding=0)", shape="box", fillcolor="#F7F7F7", color="#666666"];
+    "convB2" [label="convB2\nConv2d(in_ch=16, out_ch=32, kernel=3, stride=1, padding=1)", shape="box", fillcolor="#F7F7F7", color="#666666"];
+    "reluB" [label="reluB\nReLU()", shape="ellipse", fillcolor="#E8F5E9", color="#2E7D32"];
+    "cat1" [label="cat1\nConcat(dim=1)", shape="diamond", fillcolor="#FFF2CC", color="#B8860B"];
+    "bn1" [label="bn1\nBatchNorm2d(num_features=48)", shape="box", fillcolor="#F7F7F7", color="#666666"];
+    "out" [label="out\nReLU()", shape="ellipse", fillcolor="#E8F5E9", color="#2E8B57", peripheries=2, penwidth=1.8];
+
+    "x" -> "convA1";
+    "convA1" -> "reluA";
+    "x" -> "convB1";
+    "convB1" -> "convB2";
+    "convB2" -> "reluB";
+    "reluA" -> "cat1";
+    "reluB" -> "cat1";
+    "cat1" -> "bn1";
+    "bn1" -> "out";
+}

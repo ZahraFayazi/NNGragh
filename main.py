@@ -1,6 +1,7 @@
 from antlr4 import *
 import argparse
 import os
+import subprocess
 import traceback
 
 from gen.NNGraphLexer import NNGraphLexer
@@ -9,22 +10,23 @@ from Custom_Listener import NNGraphCustomListener
 
 from required_code_collection.ast_to_networkx_graph import show_ast
 from pytorch_code_generator import PyTorchCodeGenerator
+from graphviz_dot_exporter import GraphvizDotExporter
 
 
 def main(arguments):
-    # ===============================
-    # 1. Read input source
-    # ===============================
+
+
+
     try:
         stream = FileStream(arguments.input, encoding="utf8")
+
     except Exception as e:
         print("\nInput file error.")
         print(type(e).__name__ + ":", e)
         return 1
 
-    # ===============================
-    # 2. Lexer + Parser
-    # ===============================
+
+
     lexer = NNGraphLexer(stream)
     tokens = CommonTokenStream(lexer)
 
@@ -33,16 +35,18 @@ def main(arguments):
 
     if parser.getNumberOfSyntaxErrors() > 0:
         print("\nSyntax error found.")
-        print("Semantic analysis and code generation skipped.")
+        print("Semantic analysis, graph export, and code generation skipped.")
         return 1
 
-    # ===============================
-    # 3. AST + Semantic Analysis
-    # ===============================
+
+
     listener = NNGraphCustomListener()
     walker = ParseTreeWalker()
 
-    print(f"\n--- Starting Parsing, AST Construction, and Semantic Analysis on {arguments.input} ---")
+    print(
+        "\n--- Starting Parsing, AST Construction, "
+        f"and Semantic Analysis on {arguments.input} ---"
+    )
 
     try:
         walker.walk(listener, parse_tree)
@@ -50,7 +54,10 @@ def main(arguments):
     except ValueError as e:
         print("\nSemantic analysis failed.")
         print(e)
-        print("\nCode generation skipped until semantic errors are fixed.")
+        print(
+            "\nGraph export and code generation skipped "
+            "until semantic errors are fixed."
+        )
         return 1
 
     except Exception as e:
@@ -63,36 +70,125 @@ def main(arguments):
         return 1
 
     print("\nSemantic analysis completed successfully.")
-
-    # برای چک کردن اینکه config واقعاً parse شده یا نه
     print("Parsed config:", listener.config)
 
-    # ===============================
-    # 4. PyTorch Code Generation
-    # ===============================
+
+
+    if (
+        arguments.dot_output
+        or arguments.png_output
+        or arguments.print_dot
+    ):
+        print("\n--- Exporting NNGraph to Graphviz ---")
+
+        try:
+            dot_exporter = GraphvizDotExporter(listener)
+            dot_source = dot_exporter.generate()
+
+            # DOT path used for both DOT export and PNG generation
+            dot_path = arguments.dot_output or "output/model.dot"
+
+            # Create DOT output directory
+            dot_directory = os.path.dirname(
+                os.path.abspath(dot_path)
+            )
+
+            if dot_directory:
+                os.makedirs(dot_directory, exist_ok=True)
+
+
+            dot_exporter.write(dot_path)
+
+            print("Graphviz DOT exported successfully.")
+            print(f"DOT output file: {dot_path}")
+
+            # Generate or overwrite model.png
+            if arguments.png_output:
+                png_directory = os.path.dirname(
+                    os.path.abspath(arguments.png_output)
+                )
+
+                if png_directory:
+                    os.makedirs(png_directory, exist_ok=True)
+
+                subprocess.run(
+                    [
+                        "dot",
+                        "-Tpng",
+                        dot_path,
+                        "-o",
+                        arguments.png_output,
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+
+                print("Graphviz PNG generated successfully.")
+                print(f"PNG output file: {arguments.png_output}")
+
+            if arguments.print_dot:
+                print("\n--- Generated Graphviz DOT ---")
+                print(dot_source)
+
+        except FileNotFoundError:
+            print("\nGraphviz executable 'dot' was not found.")
+            print(
+                "Install Graphviz and make sure its bin directory "
+                "is added to the system PATH."
+            )
+            return 1
+
+        except subprocess.CalledProcessError as e:
+            print("\nGraphviz failed to generate the PNG image.")
+
+            if e.stderr:
+                print(e.stderr)
+
+            if arguments.debug:
+                traceback.print_exc()
+
+            return 1
+
+        except Exception as e:
+            print("\nGraphviz DOT/PNG export failed.")
+            print(type(e).__name__ + ":", e)
+
+            if arguments.debug:
+                traceback.print_exc()
+
+            return 1
+
+
+
     print("\n--- Generating PyTorch Code ---")
 
     try:
         generator = PyTorchCodeGenerator(listener)
 
-        # نکته مهم:
-        # اگر --include-main زده شده باشد، main اجباری تولید می‌شود.
-        # اگر زده نشده باشد، None می‌دهیم تا generator خودش تصمیم بگیرد.
-        # یعنی اگر config وجود داشته باشد، main تولید می‌شود.
         include_main = True if arguments.include_main else None
 
         generated_code = generator.generate(
             include_main=include_main
         )
 
-        compile(generated_code, arguments.output, "exec")
 
-        output_dir = os.path.dirname(os.path.abspath(arguments.output))
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
+        compile(
+            generated_code,
+            arguments.output,
+            "exec"
+        )
 
-        with open(arguments.output, "w", encoding="utf8") as f:
-            f.write(generated_code)
+        output_directory = os.path.dirname(
+            os.path.abspath(arguments.output)
+        )
+
+        if output_directory:
+            os.makedirs(output_directory, exist_ok=True)
+
+
+        with open(arguments.output, "w", encoding="utf8") as file:
+            file.write(generated_code)
 
         print("PyTorch code generated successfully.")
         print(f"Output file: {arguments.output}")
@@ -124,9 +220,7 @@ def main(arguments):
 
         return 1
 
-    # ===============================
-    # 5. Optional AST Display
-    # ===============================
+
     if arguments.show_ast:
         print("\n--- Showing AST Graph ---")
 
@@ -134,6 +228,7 @@ def main(arguments):
             if listener.ast.root is not None:
                 show_ast(listener.ast.root)
                 print("AST graph display completed.")
+
             else:
                 print("AST root is None.")
 
@@ -149,8 +244,13 @@ def main(arguments):
 
 
 if __name__ == "__main__":
+
     argparser = argparse.ArgumentParser(
-        description="NNGraph DSL Compiler: parse, semantic analysis, AST construction, and PyTorch code generation."
+        description=(
+            "NNGraph DSL Compiler: parse, semantic analysis, "
+            "AST construction, Graphviz export, "
+            "and PyTorch code generation."
+        )
     )
 
     argparser.add_argument(
@@ -164,7 +264,7 @@ if __name__ == "__main__":
         "-o",
         "--output",
         help="Output generated PyTorch Python file",
-        default="generated_model.py"
+        default="output/generated_model.py"
     )
 
     argparser.add_argument(
@@ -177,6 +277,24 @@ if __name__ == "__main__":
         "--print-code",
         action="store_true",
         help="Print generated PyTorch code"
+    )
+
+    argparser.add_argument(
+        "--dot-output",
+        help="Export the validated user graph as a Graphviz DOT file",
+        default="output/model.dot"
+    )
+
+    argparser.add_argument(
+        "--png-output",
+        help="Generate the Graphviz graph as a PNG image",
+        default="output/model.png"
+    )
+
+    argparser.add_argument(
+        "--print-dot",
+        action="store_true",
+        help="Print generated Graphviz DOT source"
     )
 
     argparser.add_argument(
@@ -194,198 +312,3 @@ if __name__ == "__main__":
     args = argparser.parse_args()
 
     raise SystemExit(main(args))
-
-
-
-# from antlr4 import *
-# import argparse
-# import os
-# import traceback
-#
-# from gen.NNGraphLexer import NNGraphLexer
-# from gen.NNGraphParser import NNGraphParser
-# from Custom_Listener import NNGraphCustomListener
-#
-# from required_code_collection.ast_to_networkx_graph import show_ast
-# from pytorch_code_generator import PyTorchCodeGenerator
-#
-#
-# def main(arguments):
-#     # ===============================
-#     # 1. Read input source
-#     # ===============================
-#     try:
-#         stream = FileStream(arguments.input, encoding="utf8")
-#     except Exception as e:
-#         print("\nInput file error.")
-#         print(type(e).__name__ + ":", e)
-#         return 1
-#
-#     # ===============================
-#     # 2. Lexer + Parser
-#     # ===============================
-#     lexer = NNGraphLexer(stream)
-#     tokens = CommonTokenStream(lexer)
-#
-#     parser = NNGraphParser(tokens)
-#     parse_tree = parser.program()
-#
-#     # اگر syntax error وجود داشته باشد، semantic و code generation اجرا نشود
-#     if parser.getNumberOfSyntaxErrors() > 0:
-#         print("\nSyntax error found.")
-#         print("Semantic analysis, AST display, and code generation skipped.")
-#         return 1
-#
-#     # ===============================
-#     # 3. AST + Semantic Analysis
-#     # ===============================
-#     listener = NNGraphCustomListener()
-#     walker = ParseTreeWalker()
-#
-#     print(f"\n--- Starting Parsing, AST Construction, and Semantic Analysis on {arguments.input} ---")
-#
-#     try:
-#         walker.walk(listener, parse_tree)
-#
-#     except ValueError as e:
-#         print("\nSemantic analysis failed.")
-#         print(e)
-#         print("\nAST graph display skipped.")
-#         print("Code generation skipped until semantic errors are fixed.")
-#         return 1
-#
-#     except Exception as e:
-#         print("\nUnexpected error during parsing / semantic analysis.")
-#         print(type(e).__name__ + ":", e)
-#
-#         if arguments.debug:
-#             traceback.print_exc()
-#
-#         print("\nCode generation skipped.")
-#         return 1
-#
-#     print("\nSemantic analysis completed successfully.")
-#
-#     # ===============================
-#     # 4. PyTorch Code Generation
-#     # ===============================
-#     print("\n--- Generating PyTorch Code ---")
-#
-#     try:
-#         generator = PyTorchCodeGenerator(listener)
-#         #include_main = True if arguments.include_main else None
-#
-#         generated_code = generator.generate(
-#             include_main=arguments.include_main
-#         )
-#
-#         # Syntax validation for generated Python code
-#         compile(generated_code, arguments.output, "exec")
-#
-#         output_dir = os.path.dirname(os.path.abspath(arguments.output))
-#         if output_dir:
-#             os.makedirs(output_dir, exist_ok=True)
-#
-#         with open(arguments.output, "w", encoding="utf8") as f:
-#             f.write(generated_code)
-#
-#         print("PyTorch code generated successfully.")
-#         print(f"Output file: {arguments.output}")
-#
-#         if arguments.print_code:
-#             print("\n--- Generated PyTorch Code ---")
-#             print(generated_code)
-#
-#     except ValueError as e:
-#         print("\nCode generation failed.")
-#         print(e)
-#         return 1
-#
-#     except SyntaxError as e:
-#         print("\nGenerated code has Python syntax error.")
-#         print(type(e).__name__ + ":", e)
-#
-#         if arguments.debug:
-#             traceback.print_exc()
-#
-#         return 1
-#
-#     except Exception as e:
-#         print("\nUnexpected error during code generation.")
-#         print(type(e).__name__ + ":", e)
-#
-#         if arguments.debug:
-#             traceback.print_exc()
-#
-#         return 1
-#
-#     # ===============================
-#     # 5. Optional AST Graph Display
-#     # ===============================
-#     if arguments.show_ast:
-#         print("\n--- Showing AST Graph ---")
-#
-#         try:
-#             if listener.ast.root is not None:
-#                 show_ast(listener.ast.root)
-#                 print("AST graph display completed.")
-#             else:
-#                 print("AST root is None. Tree was not built.")
-#
-#         except Exception as e:
-#             print("\nAST graph display failed.")
-#             print(type(e).__name__ + ":", e)
-#
-#             if arguments.debug:
-#                 traceback.print_exc()
-#
-#     print("\nCompilation completed successfully.")
-#     return 0
-#
-#
-# if __name__ == "__main__":
-#     argparser = argparse.ArgumentParser(
-#         description="NNGraph DSL compiler: parse, semantic analysis, AST construction, and PyTorch code generation."
-#     )
-#
-#     argparser.add_argument(
-#         "-i",
-#         "--input",
-#         help="Input NNGraph source file",
-#         default="input/test.txt"
-#     )
-#
-#     argparser.add_argument(
-#         "-o",
-#         "--output",
-#         help="Output generated PyTorch Python file",
-#         default="generated_model.py"
-#     )
-#
-#     argparser.add_argument(
-#         "--include-main",
-#         action="store_true",
-#         help="Include a runnable if __name__ == '__main__' test block in generated PyTorch file"
-#     )
-#
-#     argparser.add_argument(
-#         "--print-code",
-#         action="store_true",
-#         help="Print generated PyTorch code in terminal"
-#     )
-#
-#     argparser.add_argument(
-#         "--show-ast",
-#         action="store_true",
-#         help="Display AST graph after successful semantic analysis and code generation"
-#     )
-#
-#     argparser.add_argument(
-#         "--debug",
-#         action="store_true",
-#         help="Print full traceback for unexpected errors"
-#     )
-#
-#     args = argparser.parse_args()
-#
-#     raise SystemExit(main(args))

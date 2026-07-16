@@ -4,38 +4,63 @@ from colorama import Fore, Style, init
 from gen.NNGraphListener import NNGraphListener
 from required_code_collection.ast import AST
 from required_code_collection.make_ast_subtree import make_ast_subtree
-
+from dimension_inference import DimensionInferencer
 
 init(autoreset=True)
 
 
 class NNGraphCustomListener(NNGraphListener):
 
-    # ================= SUPPORTED LAYERS SCHEMA =================
+
     SUPPORTED_LAYERS = {
+
         "Linear": {
-            "required": {"in_features": int, "out_features": int},
-            "optional": {"bias": bool}
+            "required": {
+                "out_features": int
+            },
+            "optional": {
+                "in_features": int,
+                "bias": bool
+            }
         },
+
 
         "Conv2d": {
-            "required": {"in_ch": int, "out_ch": int, "kernel": int},
-            "optional": {"stride": int, "padding": int, "bias": bool}
+            "required": {
+                "out_ch": int,
+                "kernel": int
+            },
+            "optional": {
+                "in_ch": int,
+                "stride": int,
+                "padding": int,
+                "bias": bool
+            }
+        },
+        "Conv1d": {
+                "required": {
+                    "out_ch": int,
+                    "kernel": int
+                },
+                "optional": {
+                    "in_ch": int,
+                    "stride": int,
+                    "bias": bool
+                }
         },
 
-        "Conv1d": {
-            "required": {"in_ch": int, "out_ch": int, "kernel": int},
-            "optional": {"stride": int, "bias": bool}
-        },
 
         "BatchNorm2d": {
-            "required": {"num_features": int},
-            "optional": {}
+            "required": {},
+            "optional": {
+                "num_features": int
+            }
         },
-
         "LayerNorm": {
-            "required": {"normalized_shape": (int, tuple)},
-            "optional": {}
+            "required": {},
+            "optional": {
+                "normalized_shape": (int, tuple)
+            }
         },
 
         "MaxPool2d": {
@@ -64,18 +89,31 @@ class NNGraphCustomListener(NNGraphListener):
         },
 
         "MultiHeadAttn": {
-            "required": {"embed_dim": int, "num_heads": int},
-            "optional": {}
+            "required": {
+                "num_heads": int
+            },
+            "optional": {
+                "embed_dim": int
+            }
         },
 
         "LSTM": {
-            "required": {"input_size": int, "hidden_size": int},
-            "optional": {"num_layers": int}
+            "required": {
+                "hidden_size": int
+            },
+            "optional": {
+                "input_size": int,
+                "num_layers": int
+            }
         },
 
         "GRU": {
-            "required": {"input_size": int, "hidden_size": int},
-            "optional": {}
+            "required": {
+                "hidden_size": int
+            },
+            "optional": {
+                "input_size": int
+            }
         },
 
         # Activations
@@ -137,37 +175,31 @@ class NNGraphCustomListener(NNGraphListener):
     }
 
     def __init__(self):
-        # ===== AST =====
+
         self.ast = AST()
 
-        # ===== Contexts for better diagnostics =====
+
         self.program_ctx = None
         self.model_ctx = None
         self.input_ctx = None
         self.output_ctx = None
 
-        # ===== Semantic data =====
+
         self.model_name = None
         self.input_name = None
         self.input_shape = None
         self.output_name = None
 
-        # node_id -> info
         self.nodes = {}
 
-        # list of dicts: {"src": ..., "dst": ..., "label": ..., "line": ..., "ctx": ...}
         self.edges = []
 
-        # config_key -> {"value": ..., "line": ..., "ctx": ...}
         self.config = {}
 
-        # warnings do not stop compilation
         self.warnings = []
         self.orphan_nodes = set()
 
-    # =========================================================
-    #                    DIAGNOSTICS
-    # =========================================================
+
     def _line(self, ctx):
         if ctx is not None and hasattr(ctx, "start"):
             return ctx.start.line
@@ -199,9 +231,7 @@ class NNGraphCustomListener(NNGraphListener):
             for warning in self.warnings:
                 print(warning)
 
-    # =========================================================
-    #                    HELPER FUNCTIONS
-    # =========================================================
+    # additional and helper functions
     def _parse_value_text(self, text):
         if text == "true":
             return True
@@ -305,11 +335,7 @@ class NNGraphCustomListener(NNGraphListener):
         names = list(schema["required"].keys()) + list(schema["optional"].keys())
         return "[" + ", ".join(names) + "]"
 
-    # =========================================================
-    #                    AST + SEMANTIC ACTIONS
-    # =========================================================
 
-    # ================= SHAPE =================
     def exitShape(self, ctx):
         shape_text = ctx.getText()
 
@@ -320,7 +346,6 @@ class NNGraphCustomListener(NNGraphListener):
         ctx.ast_value = self.ast.make_node(f"SHAPE:{shape_text}", [])
         self.ast.root = ctx.ast_value
 
-    # ================= INPUT DECLARATION =================
     def exitInputDecl(self, ctx):
         input_name = ctx.ID().getText()
 
@@ -335,7 +360,7 @@ class NNGraphCustomListener(NNGraphListener):
         ctx.ast_value = self.ast.make_node(f"INPUT:{input_name}", children)
         self.ast.root = ctx.ast_value
 
-    # ================= OUTPUT DECLARATION =================
+
     def exitOutputDecl(self, ctx):
         output_name = ctx.ID().getText()
 
@@ -345,7 +370,7 @@ class NNGraphCustomListener(NNGraphListener):
         ctx.ast_value = self.ast.make_node(f"OUTPUT:{output_name}", [])
         self.ast.root = ctx.ast_value
 
-    # ================= MODEL =================
+
     def exitModelDecl(self, ctx):
         model_name = ctx.ID().getText()
 
@@ -359,7 +384,7 @@ class NNGraphCustomListener(NNGraphListener):
             keep_node=True
         )
 
-    # ================= LAYER TYPE =================
+
     def exitLayerType(self, ctx):
         layer_name = ctx.getText()
 
@@ -368,7 +393,6 @@ class NNGraphCustomListener(NNGraphListener):
         ctx.ast_value = self.ast.make_node(f"TYPE:{layer_name}", [])
         self.ast.root = ctx.ast_value
 
-    # ================= VALUE =================
     def exitValue(self, ctx):
         value_text = ctx.getText()
 
@@ -380,7 +404,7 @@ class NNGraphCustomListener(NNGraphListener):
         ctx.ast_value = self.ast.make_node(f"{value_text}", [])
         self.ast.root = ctx.ast_value
 
-    # ================= PARAM =================
+
     def exitParam(self, ctx):
         key = ctx.ID().getText()
         value_node = ctx.value()
@@ -398,7 +422,6 @@ class NNGraphCustomListener(NNGraphListener):
         ctx.ast_value = self.ast.make_node(f"{key}", children)
         self.ast.root = ctx.ast_value
 
-    # ================= PARAM LIST =================
     def exitParamList(self, ctx):
         params = {}
         param_types = {}
@@ -432,12 +455,11 @@ class NNGraphCustomListener(NNGraphListener):
             keep_node=True
         )
 
-    # ================= NODE DECLARATION =================
     def exitNodeDecl(self, ctx):
         node_id = ctx.ID().getText()
         node_type = ctx.layerType().getText()
 
-        # ---------- Semantic Rule: Unique node IDs ----------
+        # id 's should be unique
         if node_id in self.nodes:
             self.error(
                 f"Node identifier '{node_id}' is already declared.",
@@ -445,7 +467,7 @@ class NNGraphCustomListener(NNGraphListener):
                 "Node identifiers must be unique within the graph block."
             )
 
-        # ---------- Semantic Rule: Supported layer type ----------
+
         if node_type not in self.SUPPORTED_LAYERS:
             self.error(
                 f"Unsupported layer type '{node_type}' for node '{node_id}'.",
@@ -464,7 +486,7 @@ class NNGraphCustomListener(NNGraphListener):
             param_raw_texts = ctx.paramList().param_raw_texts
             param_dsl_types = ctx.paramList().param_dsl_types
 
-        # ---------- Semantic Rule: Parameter type check ----------
+
         self._check_layer_params(
             node_id=node_id,
             node_type=node_type,
@@ -511,7 +533,7 @@ class NNGraphCustomListener(NNGraphListener):
         allowed.update(required)
         allowed.update(optional)
 
-        # Required parameters
+
         for param_name in required:
             if param_name not in params:
                 self.error(
@@ -520,7 +542,7 @@ class NNGraphCustomListener(NNGraphListener):
                     f"Required parameters for {node_type} are: {self._params_hint(node_type)}"
                 )
 
-        # Unexpected + type check
+
         for param_name, param_value in params.items():
 
             if param_name not in allowed:
@@ -542,14 +564,13 @@ class NNGraphCustomListener(NNGraphListener):
                     ctx
                 )
 
-    # ================= LABEL =================
+
     def exitLabel(self, ctx):
         label_text = ctx.STRING().getText()
 
         ctx.ast_value = self.ast.make_node(f"LABEL:{label_text}", [])
         self.ast.root = ctx.ast_value
 
-    # ================= EDGE =================
     def exitEdgeDecl(self, ctx):
         src = ctx.ID(0).getText()
         dst = ctx.ID(1).getText()
@@ -573,7 +594,7 @@ class NNGraphCustomListener(NNGraphListener):
         ctx.ast_value = self.ast.make_node(f"{src}->{dst}", children)
         self.ast.root = ctx.ast_value
 
-    # ================= GRAPH STATEMENT =================
+
     def exitGraphStatement(self, ctx):
         make_ast_subtree(
             self.ast,
@@ -582,7 +603,7 @@ class NNGraphCustomListener(NNGraphListener):
             keep_node=False
         )
 
-    # ================= GRAPH BLOCK =================
+
     def exitGraphBlock(self, ctx):
         make_ast_subtree(
             self.ast,
@@ -591,7 +612,7 @@ class NNGraphCustomListener(NNGraphListener):
             keep_node=True
         )
 
-    # ================= CONFIG STATEMENT =================
+
     def exitConfigStatement(self, ctx):
         key = ctx.ID().getText()
         value_text = ctx.value().getText()
@@ -610,7 +631,7 @@ class NNGraphCustomListener(NNGraphListener):
         ctx.ast_value = self.ast.make_node(f"{key}", children)
         self.ast.root = ctx.ast_value
 
-    # ================= CONFIG BLOCK =================
+
     def exitConfigBlock(self, ctx):
         make_ast_subtree(
             self.ast,
@@ -619,7 +640,7 @@ class NNGraphCustomListener(NNGraphListener):
             keep_node=True
         )
 
-    # ================= PROGRAM ROOT + GRAPH SEMANTIC CHECKS =================
+
     def exitProgram(self, ctx):
         self.program_ctx = ctx
 
@@ -630,13 +651,15 @@ class NNGraphCustomListener(NNGraphListener):
             keep_node=True
         )
 
-        # semantic checks that require the whole graph
+
         self.check_no_undefined_references()
         self.check_no_orphan_nodes()
         self.check_input_reachability()
         self.check_output_reachability()
         self.check_cycle_detection()
         self.check_residual_arity()
+
+        DimensionInferencer(self).run()
 
         print(f"\n{Fore.CYAN}===== AST BUILT ====={Style.RESET_ALL}")
         print("Root:", self.ast.root.value)
@@ -653,11 +676,8 @@ class NNGraphCustomListener(NNGraphListener):
         else:
             print(f"{Fore.GREEN}Semantic check passed successfully.{Style.RESET_ALL}")
 
-    # =========================================================
-    #                  GRAPH-LEVEL SEMANTIC RULES
-    # =========================================================
 
-    # ---------- Rule 1: No undefined references ----------
+
     def check_no_undefined_references(self):
         valid_nodes = set(self.nodes.keys())
 
@@ -682,7 +702,7 @@ class NNGraphCustomListener(NNGraphListener):
                     f"Declared nodes are: {self._declared_nodes_hint()}"
                 )
 
-    # ---------- Rule 2: No orphan nodes ----------
+
     def check_no_orphan_nodes(self):
         used_nodes = set()
 
@@ -692,7 +712,7 @@ class NNGraphCustomListener(NNGraphListener):
 
         for node_id, node_info in self.nodes.items():
 
-            # input/output را از orphan check مستثنی می‌کنیم
+
             if node_id == self.input_name or node_id == self.output_name:
                 continue
 
@@ -703,7 +723,7 @@ class NNGraphCustomListener(NNGraphListener):
                     f"Node '{node_id}' is declared but never referenced in any edge.",
                     node_info["ctx"]
                 )
-    # ---------- Rule 3: Input reachability ----------
+
     def check_input_reachability(self):
         if not self.input_name:
             self.error(
@@ -716,9 +736,7 @@ class NNGraphCustomListener(NNGraphListener):
 
         for node_id, node_info in self.nodes.items():
 
-            # نکته مهم:
-            # orphan node طبق داکیومنت فقط Warning است.
-            # پس نباید دوباره به عنوان reachability error گزارش شود.
+
             if node_id in self.orphan_nodes:
                 continue
 
@@ -729,7 +747,7 @@ class NNGraphCustomListener(NNGraphListener):
                     "Every node must be reachable from the input node following edge directions."
                 )
 
-    # ---------- Rule 4: Output reachability ----------
+
     def check_output_reachability(self):
         if not self.output_name:
             self.error(
@@ -754,7 +772,7 @@ class NNGraphCustomListener(NNGraphListener):
                 "The output node must be reachable from at least one path from input."
             )
 
-    # ---------- Rule 5: Cycle detection ----------
+
     def check_cycle_detection(self):
         adjacency = self._build_adjacency_with_edge_context()
 
@@ -795,7 +813,7 @@ class NNGraphCustomListener(NNGraphListener):
             if node not in visited:
                 dfs(node)
 
-    # ---------- Rule 6: Residual arity ----------
+
     def check_residual_arity(self):
         incoming_count = defaultdict(int)
 
@@ -812,9 +830,7 @@ class NNGraphCustomListener(NNGraphListener):
                         node_info["ctx"]
                     )
 
-    # =========================================================
-    #                    GRAPH HELPERS
-    # =========================================================
+
     def _build_adjacency(self):
         adjacency = defaultdict(list)
 
